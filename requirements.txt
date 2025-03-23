@@ -1,0 +1,7 @@
+pandas
+sqlalchemy
+matplotlib
+pillow
+gradio
+google-generativeai
+pymysql
