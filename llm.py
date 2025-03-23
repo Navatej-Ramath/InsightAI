@@ -147,24 +147,24 @@ def process_uploaded_data(file_obj):
     log_messages.append("Generated column insights")
 
     # For each column that contains "date", append its first non-null value to the description
-for col in columns:
-    if "date" in col.lower():
-        non_null_series = df[col].dropna()
-        if not non_null_series.empty:
-            first_non_null = non_null_series.iloc[0]
-            
-            # Try to infer the format
-            try:
-                inferred_date = pd.to_datetime(first_non_null, dayfirst=True)  # Adjust based on locale
-                detected_format = inferred_date.strftime("%d-%b-%y")  # Example format like 07-Jun-22
-            except Exception:
-                detected_format = str(first_non_null)  # Fallback to raw value
+    for col in columns:
+        if "date" in col.lower():
+            non_null_series = df[col].dropna()
+            if not non_null_series.empty:
+                first_non_null = non_null_series.iloc[0]
+                
+                # Try to infer the format
+                try:
+                    inferred_date = pd.to_datetime(first_non_null, dayfirst=True)  # Adjust based on locale
+                    detected_format = inferred_date.strftime("%d-%b-%y")  # Example format like 07-Jun-22
+                except Exception:
+                    detected_format = str(first_non_null)  # Fallback to raw value
 
-            # Update insights dictionary safely
-            if col in insights:
-                if "description" not in insights[col]:
-                    insights[col]["description"] = ""
-                insights[col]["description"] += f" FORMAT detected: {detected_format}. Note this during code generation."
+                # Update insights dictionary safely
+                if col in insights:
+                    if "description" not in insights[col]:
+                        insights[col]["description"] = ""
+                    insights[col]["description"] += f" FORMAT detected: {detected_format}. Note this during code generation."
 
     # Update dataframe columns
     updated_df = update_dataframe_columns(df, insights)
