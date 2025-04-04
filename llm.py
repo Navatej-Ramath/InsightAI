@@ -526,7 +526,8 @@ def create_interface():
                     gr.Markdown("- **Gemma2b**: Optimized for simple queries")
                     gr.Markdown("- **Llama 3**: Best for medium complexity analysis")
                     gr.Markdown("- **DeepSeek-R1**: Handles complex, detailed analysis")
-                    file_upload = gr.File(label="Upload Your Data (CSV)")
+                    # Update to support multiple file uploads
+                    file_upload = gr.File(label="Upload Your Data (CSV)", file_count="multiple")
                     initialize_btn = gr.Button("Initialize AI Engine", variant="primary")
 
         # Loading screen component
@@ -537,8 +538,8 @@ def create_interface():
                                        label="Loading Animation")
             processing_log = gr.Textbox(label="Processing Log", lines=10, interactive=False)
 
-        # Data processing and transition logic
-        def process_data_and_transition(file_obj):
+        # Updated to process multiple files
+        def process_data_and_transition(file_obj_list):
             # Show loading screen first
             yield {
                 intro_screen: gr.Column(visible=False),
@@ -547,27 +548,36 @@ def create_interface():
             }
 
             # Process the data
-            if file_obj is not None:
-                log_output, df = process_uploaded_data(file_obj)
+            if file_obj_list is not None and len(file_obj_list) > 0:
+                all_log_outputs = []
+                any_successful = False
+                
+                for file_obj in file_obj_list:
+                    log_output, df = process_uploaded_data(file_obj)
+                    all_log_outputs.append(log_output)
+                    if df is not None:
+                        any_successful = True
+                
+                combined_log = "\n\n".join(all_log_outputs)
                 yield {
-                    processing_log: log_output
+                    processing_log: combined_log
                 }
 
                 # Add a delay to simulate processing
                 time.sleep(3)
 
-                if df is not None:
+                if any_successful:
                     yield {
                         loading_screen: gr.Column(visible=False),
                         main_interface: gr.Column(visible=True)
                     }
                 else:
                     yield {
-                        processing_log: log_output + "\n\nError processing data. Please check the log and try again."
+                        processing_log: combined_log + "\n\nError processing data. Please check the log and try again."
                     }
             else:
                 yield {
-                    processing_log: "No file uploaded. Please upload a CSV file and try again."
+                    processing_log: "No files uploaded. Please upload CSV files and try again."
                 }
                 # Wait a few seconds then go back to intro screen
                 time.sleep(5)
@@ -624,8 +634,6 @@ def create_interface():
 
 # Add custom CSS for better appearance
 css = """
-
-
 button {
     background-color: #4CAF50 !important; /* Material Green */
     color: white !important;
@@ -649,6 +657,15 @@ button:active {
     box-shadow: 0px 2px 5px rgba(0, 0, 0, 0.2) !important;
 }
 
+/* Custom styling for the "Add more files" button in the file upload component */
+.add-more-files button::before {
+    content: "+";
+}
+
+/* Custom CSS to target Gradio's file upload component buttons */
+.file-preview button:first-of-type::before {
+    content: "+" !important;
+}
 
 
 """
