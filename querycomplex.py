@@ -6,6 +6,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, r2_score
 import numpy as np
 import pickle  # Add pickle import
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.ensemble import RandomForestRegressor
 
 # Example dataset: each query paired with a manually assigned complexity score
 data = {
@@ -82,16 +84,14 @@ X_train, X_test, y_train, y_test = train_test_split(df['query'], df['complexity'
 
 # Create a regression pipeline: vectorizer extracts textual features, then Linear Regression learns the relationship
 pipeline = Pipeline([
-    ('vectorizer', CountVectorizer()),
-    ('regressor', LinearRegression())
+    ('vectorizer', TfidfVectorizer()),
+    ('regressor', RandomForestRegressor(random_state=42))
 ])
 
 # Train the model
 pipeline.fit(X_train, y_train)
-
-# Save the model to a file using pickle
-with open('query_complexity_model.pkl', 'wb') as model_file:
-    pickle.dump(pipeline, model_file)
+with open('improved_query_complexity_model.pkl', 'wb') as f:
+    pickle.dump(pipeline, f)
 print("Model saved to 'query_complexity_model.pkl'")
 
 # Example: How to load the model later

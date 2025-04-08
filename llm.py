@@ -17,6 +17,10 @@ import google.generativeai as genai
 import gradio as gr
 from PIL import Image
 import glob
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import train_test_split
+import numpy as np
+
 
 # Configure Gemini with the API key
 genai.configure(api_key=api_key)
@@ -34,6 +38,44 @@ GUARDRAILS = {
 def clean_data(df):
     # Standardize column names
     df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_")
+
+    # Handle currency columns - detect and convert columns with dollar signs
+    for col in df.columns:
+        # Check if column might contain currency values
+        if df[col].dtype == 'object':  # Only check string columns
+            # Sample the first few non-null values
+            sample_values = df[col].dropna().astype(str).head(10).tolist()
+            # Check if any values start with dollar signs or contain currency formatting
+            contains_currency = any('$' in str(val) or '£' in str(val) or '€' in str(val) for val in sample_values)
+            
+            if contains_currency or any(keyword in col.lower() for keyword in ['price', 'amount', 'sales', 'revenue', 'cost']):
+                print(f"Converting currency column: {col}")
+                # Remove currency symbols, commas, and extra spaces, then convert to float
+                df[col] = df[col].astype(str).apply(
+                    lambda x: re.sub(r'[$£€,\s]', '', x) if re.search(r'[$£€]', x) else x
+                )
+                # Try to convert to numeric, coerce errors to NaN
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+                print(f"Converted {col} to numeric type")
+
+    # Handle date columns - convert formatted dates to datetime objects
+    for col in df.columns:
+        if 'date' in col.lower():
+            try:
+                # Sample the first few non-null values to detect format
+                sample_date = str(df[col].dropna().iloc[0]) if not df[col].dropna().empty else ""
+                
+                # Check for common date formats
+                if re.search(r'\d{2}-[A-Za-z]{3}-\d{2}', sample_date):  # Format like "12-Jan-22"
+                    print(f"Converting date column with format DD-MMM-YY: {col}")
+                    df[col] = pd.to_datetime(df[col], format='%d-%b-%y', errors='coerce')
+                else:
+                    # Try multiple common formats
+                    df[col] = pd.to_datetime(df[col], errors='coerce')
+                
+                print(f"Converted {col} to datetime type")
+            except Exception as e:
+                print(f"Error converting date column {col}: {str(e)}")
 
     # Handle missing values
     numeric_cols = df.select_dtypes(include=["number"]).columns
@@ -236,7 +278,7 @@ def score_query_complexity(query):
     Compute a simple complexity score for a query.
     The score is based on the number of words and a boost for certain complexity-indicating keywords.
     """
-    with open('query_complexity_model.pkl', 'rb') as model_file:
+    with open('improved_query_complexity_model.pkl', 'rb') as model_file:
         model = pickle.load(model_file)
 
     # Use the model to make predictions
@@ -260,8 +302,8 @@ def route_query(query):
     - For high complexity: choose gemma2b.
     """
     # Define thresholds for complexity scoring
-    LOW_THRESHOLD = 5  # Simple queries
-    MEDIUM_THRESHOLD = 8  # Medium complexity
+    LOW_THRESHOLD = 8  # Simple queries
+    MEDIUM_THRESHOLD = 8.5  # Medium complexity
 
     # Lowercase word list for keyword matching
     words = query.lower().split()
@@ -270,7 +312,7 @@ def route_query(query):
     
 
     # Compute complexity score if no override applies
-    score = score_query_complexity(query)
+    score = score_query_complexity(query) + len(words) * 0.1
 
     # Route based on score and quality ranking
     if score <= LOW_THRESHOLD:
@@ -284,6 +326,90 @@ def route_query(query):
         reason = f"Query complexity score: {score} (High) - routing to deepseek-r1"
 
     return selected_model, reason
+
+def generate_predictions(df, date_col, target_col, periods=3):
+    """
+    Generate future predictions using linear regression
+    """
+    try:
+        # Convert date to numeric value for regression
+        df['date_numeric'] = (df[date_col] - df[date_col].min()).dt.days
+        
+        # Prepare data
+        X = df[['date_numeric']].values.reshape(-1,1)
+        y = df[target_col].values
+        
+        # Train model
+        model = LinearRegression()
+        model.fit(X, y)
+        
+        # Generate future dates
+        last_date = df[date_col].max()
+        future_dates = pd.date_range(
+            start=last_date,
+            periods=periods+1,  # Include last known date
+            freq='M'
+        )[1:]
+        
+        # Create future features
+        future_days = (future_dates - df[date_col].min()).days
+        future_X = np.array(future_days).reshape(-1,1)
+        
+        # Make predictions
+        predictions = model.predict(future_X)
+        
+        return pd.DataFrame({
+            'date': future_dates,
+            'predicted_' + target_col: predictions.round(2)
+        })
+        
+    except Exception as e:
+        print(f"Prediction error: {str(e)}")
+        return None
+
+# Modify the generate_code function to handle predictions
+def generate_code(eda_plan, previous_code=None, error_message=None):
+    model = genai.GenerativeModel(model_name='gemini-2.0-flash')
+    # ... [existing code] ...
+    
+    # Add prediction-specific instructions to the prompt
+    prompt_code += (
+        "\n\nFor prediction requests:"
+        "\n1. Use generate_predictions() function for time series forecasting"
+        "\n2. Always validate date column format before prediction"
+        "\n3. Show both historical data and predictions in visualizations"
+        "\n4. Include prediction confidence intervals if possible"
+    )
+    
+    # ... [rest of existing code] ...
+
+# Modify the execute_code function to handle predictions
+def execute_code(code):
+    # Add prediction function to the execution context
+    modified_code = f"""
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import train_test_split
+import numpy as np
+
+{code}
+    """
+    
+    # Write the modified code to file
+    with open(script_path, "w") as f:
+        f.write(modified_code)
+    
+    # ... [rest of existing execution logic] ...
+
+# Update the EDA plan generation prompt
+prompt_plan = ( 
+    # ... [existing prompt] ...
+    "If the query contains prediction requests:"
+    "\n1. Check for sufficient historical data (minimum 12 data points)"
+    "\n2. Verify the date column is properly formatted"
+    "\n3. Split data into training and validation sets"
+    "\n4. Generate predictions using appropriate models"
+    "\n5. Visualize predictions against historical trends"
+)
 
 # Function to run analysis
 def run_analysis(user_query):
@@ -336,8 +462,11 @@ def run_analysis(user_query):
         prompt_plan = ( 
             f"User Query:\n{user_query}\n\n"
             f"Database Metadata (JSON format):\n{metadata_json}\n\n"
-            "Generate a step-by-step EDA plan that uses the metadata to correctly access the database and perform the analysis."
+            "Generate a step-by-step EDA plan that uses the metadata to correctly access the database and perform the analysis. "
+            "Generate visualization only if specifically requested in the query. "
+            "Ensure that each visualization directly addresses the specific components of the query (e.g., if the query is about sales trends by product category, generate plots that compare sales across these categories over time)."
         )
+        prompt_plan += " Only show the requested metric - no additional visualizations."
         response_plan = model.generate_content(prompt_plan)
         return response_plan.text.strip()
 
@@ -367,7 +496,13 @@ def run_analysis(user_query):
                 "Convert this to Python code that strictly follows the EDA plan. "
                 "Important: Always use the refined_column names from the metadata, not the original column names.\n"
                 "Important: When using table names in SQL queries with SQLite, always wrap table names in double quotes to handle spaces and special characters.\n"
-                "For example, use: SELECT * FROM \"Table Name\" instead of SELECT * FROM Table Name.\n"
+                "For example, use: SELECT * FROM \"Table Name\" instead of SELECT * FROM Table Name.\n\n"
+                "Important data handling instructions:\n"
+                "1. For date columns: Use pd.to_datetime() and explicitly specify format when parsing dates like '12-Jan-22' using format='%d-%b-%y'\n"
+                "2. For currency values: Clean dollar signs and commas using regex before calculations: df['column'] = df['column'].astype(str).str.replace('[$,]', '', regex=True).astype(float)\n"
+                "3. Always validate data before visualization: check for nulls, data type consistency, and valid ranges\n"
+                "4. For time-series visualizations, ensure dates are properly sorted\n"
+                "5. Include appropriate labels, titles, and legends in all visualizations\n\n"
                 "Use a unique filename for each plot with timestamp, e.g.: plt.savefig(f'plots/visualization_{int(time.time())}.png')\n"
                 "Make sure to close any figures after saving them with plt.close()\n"
                 "Save plots in 'plots/' folder. Return ONLY the code in a code block."
